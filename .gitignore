@@ -11,6 +11,7 @@ wheels/
 
 # Data and Cache
 data/cache/
+data/static/
 .panel_sessions/
 
 # IDE and OS

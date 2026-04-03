@@ -1,5 +1,6 @@
 """Main dashboard layout with reactive callbacks."""
 
+import pandas as pd
 import panel as pn
 
 from app.config import COLORS, HOLDING_PERIODS
@@ -26,7 +27,11 @@ _DATA = None
 def _get_data():
     global _DATA
     if _DATA is None:
-        _DATA = load_market_data()
+        try:
+            _DATA = load_market_data()
+        except Exception as e:
+            # Re-raise to be handled by the UI update logic
+            raise RuntimeError(f"Failed to load market data: {e}")
     return _DATA
 
 
@@ -47,9 +52,11 @@ def _compute_all(signal_type, holding_period_label, threshold):
     metrics = compute_metrics(returns_df)
     buckets = get_pe_buckets(returns_df, signal_type)
 
-    current_pe = float(df["PE"].iloc[-1])
-    current_pb = float(df["PB"].iloc[-1])
-    nifty_level = float(df["Close"].iloc[-1])
+    # Handle cases where PE/PB might be NaN (e.g. historical data gap)
+    last_row = df.iloc[-1]
+    current_pe = float(last_row["PE"]) if not pd.isna(last_row["PE"]) else 0.0
+    current_pb = float(last_row["PB"]) if not pd.isna(last_row["PB"]) else 0.0
+    nifty_level = float(last_row["Close"])
 
     return {
         "df": df, "signals": signals, "returns_df": returns_df,
@@ -124,14 +131,28 @@ def create_dashboard():
     charts_area = pn.Column(sizing_mode="stretch_width")
 
     def _update(event=None):
-        result = _compute_all(
-            signal_toggle.value, holding_select.value, threshold_slider.value,
-        )
-        metrics_area.clear()
-        metrics_area.append(_build_metrics_row(result))
+        try:
+            result = _compute_all(
+                signal_toggle.value, holding_select.value, threshold_slider.value,
+            )
+            metrics_area.clear()
+            metrics_area.append(_build_metrics_row(result))
 
-        charts_area.clear()
-        charts_area.append(_build_tabs(result))
+            charts_area.clear()
+            charts_area.append(_build_tabs(result))
+            
+        
+        except Exception as e:
+            error_msg = str(e)
+            alert = pn.pane.Alert(
+                f"### Data Error\n{error_msg}\n\n"
+                "Please check your internet connection or try again later.",
+                alert_type="danger",
+                sizing_mode="stretch_width"
+            )
+            metrics_area.clear()
+            metrics_area.append(alert)
+            charts_area.clear()
 
     # Wire up callbacks
     signal_toggle.param.watch(_update, "value")
@@ -142,16 +163,20 @@ def create_dashboard():
     _update()
 
     # --- Data range header info ---
-    df = _get_data()
-    start_date = df["Date"].iloc[0].strftime("%b %Y")
-    end_date = df["Date"].iloc[-1].strftime("%b %Y")
+    try:
+        df = _get_data()
+        start_date = df["Date"].iloc[0].strftime("%b %Y")
+        end_date = df["Date"].iloc[-1].strftime("%b %Y")
+        date_range_str = f"{start_date} – {end_date}"
+    except:
+        date_range_str = "Unknown"
 
     header_html = pn.pane.HTML(f"""
     <div style="display:flex; align-items:center; gap:20px;
-         color: var(--panel-on-surface-color, {COLORS['text_secondary']}); font-size:13px;">
+         color: {COLORS['text_secondary']}; font-size:13px;">
         <div style="display:flex; align-items:center; gap:6px;">
             <span style="font-size:16px;">📊</span>
-            <span>Data: {start_date} – {end_date}</span>
+            <span>Data: {date_range_str}</span>
         </div>
     </div>
     """, sizing_mode="stretch_width", align="end")
